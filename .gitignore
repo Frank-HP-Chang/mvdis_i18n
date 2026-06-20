@@ -135,3 +135,6 @@ result/[0-9]*.json
 
 credentials.json
 token.json
+
+# grab_exam.js 的個人設定檔（含身分證等個資，請勿提交）
+grab_config.json

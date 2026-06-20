@@ -1,0 +1,36 @@
+{
+    "_說明": "複製本檔為 grab_config.json 後填入你的資料。grab_config.json 已被 .gitignore 忽略，內含身分證等個資，請勿提交到版控。",
+
+    "licenseTypeCode": 3,
+    "_licenseTypeCode": "3 = 普通重型機車；2 = 普通輕型機車",
+
+    "dmvNo": "41",
+    "_dmvNo": "監理站代碼，見 dmvNo.json。例：41=板橋監理站、40=臺北區監理所、21=士林監理站",
+
+    "examDate": "2026-07-15",
+    "_examDate": "想報考的考試日期（西元 YYYY-MM-DD），腳本會自動轉成民國年送出查詢",
+
+    "openTime": "2026-06-21T00:00:00+08:00",
+    "_openTime": "報名開放／你想開始搶的精確時刻（含時區）。可留 null 表示一啟動就開始搶。routine 建議排在此時間前幾分鐘觸發。",
+
+    "preferGroups": [],
+    "_preferGroups": "只想搶特定組別時填 secId 例如 [\"2\"]（初考生）；留空陣列代表抓到第一個有名額就報名",
+
+    "pollIntervalMs": 3000,
+    "_pollIntervalMs": "每次查詢間隔（毫秒），請勿調太短以免對監理站造成負擔",
+
+    "jitterMs": 700,
+    "_jitterMs": "每次間隔額外隨機加 0~此值毫秒，讓請求不要太規律",
+
+    "maxDurationMs": 1800000,
+    "_maxDurationMs": "最長搶位時間（毫秒），預設 30 分鐘後放棄",
+
+    "applicant": {
+        "idNo": "A123456789",
+        "birthday": "1995-08-20",
+        "name": "王小明",
+        "contactTel": "0912345678",
+        "email": "someone@example.com"
+    },
+    "_applicant": "報名人個資。birthday 為西元 YYYY-MM-DD，腳本會自動轉民國年。contactTel 需 10 碼手機"
+}
