@@ -7,8 +7,14 @@
     "dmvNo": "41",
     "_dmvNo": "監理站代碼，見 dmvNo.json。例：41=板橋監理站、40=臺北區監理所、21=士林監理站",
 
-    "examDate": "2026-07-15",
-    "_examDate": "想報考的考試日期（西元 YYYY-MM-DD），腳本會自動轉成民國年送出查詢",
+    "examDate": null,
+    "_examDate": "指定考試日期（西元 YYYY-MM-DD）；留 null＝掃描模式，自動搶最近可報名的日期",
+
+    "scanDays": 60,
+    "_scanDays": "掃描模式下，從 scanStart（預設今天）往後掃幾天找最早名額",
+
+    "scanStart": null,
+    "_scanStart": "掃描起始日（西元 YYYY-MM-DD），留 null 代表從今天開始",
 
     "openTime": "2026-06-21T00:00:00+08:00",
     "_openTime": "報名開放／你想開始搶的精確時刻（含時區）。可留 null 表示一啟動就開始搶。routine 建議排在此時間前幾分鐘觸發。",

@@ -44,7 +44,12 @@ function config_from_env() {
     return {
         licenseTypeCode: env.GRAB_LICENSE_TYPE || 3,
         dmvNo: env.GRAB_DMV_NO,
-        examDate: env.GRAB_EXAM_DATE,
+        examDate: env.GRAB_EXAM_DATE || null, // 留空＝掃描模式，搶最近可報名的日期
+        scanDays: env.GRAB_SCAN_DAYS ? parseInt(env.GRAB_SCAN_DAYS) : undefined,
+        scanStart: env.GRAB_SCAN_START || null,
+        scanDelayMs: env.GRAB_SCAN_DELAY_MS
+            ? parseInt(env.GRAB_SCAN_DELAY_MS)
+            : undefined,
         openTime: env.GRAB_OPEN_TIME || null,
         preferGroups: env.GRAB_PREFER_GROUPS
             ? env.GRAB_PREFER_GROUPS.split(",").map((s) => s.trim())
@@ -84,7 +89,8 @@ function load_config() {
     }
 
     // 基本必填檢查，提早失敗比到了現場才發現好
-    const required = ["licenseTypeCode", "dmvNo", "examDate", "applicant"];
+    // examDate 非必填：留空代表掃描模式（自動搶最近可報名的日期）
+    const required = ["licenseTypeCode", "dmvNo", "applicant"];
     for (const key of required) {
         if (cfg[key] === undefined || cfg[key] === null || cfg[key] === "") {
             console.error(`設定檔缺少必填欄位：${key}`);
@@ -127,24 +133,47 @@ function pick_slot(results, preferGroups) {
     return available[0];
 }
 
+// 列出要查詢的日期清單（西元 YYYY-MM-DD）
+// 有指定 examDate → 只查那天；否則從 scanStart（預設今天）往後 scanDays 天，
+// 由近到遠排序，掃到的第一個有名額者就是「最近可報名」的場次。
+function build_target_dates(cfg) {
+    if (cfg.examDate) return [cfg.examDate];
+    const days = cfg.scanDays || 60;
+    const start = cfg.scanStart
+        ? new Date(`${cfg.scanStart}T00:00:00`)
+        : new Date();
+    const dates = [];
+    for (let i = 0; i < days; i++) {
+        const d = new Date(start.getTime() + i * 86400000);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        dates.push(`${y}-${m}-${day}`);
+    }
+    return dates;
+}
+
 async function main() {
     const cfg = load_config();
     ensure_result_dir();
 
     const licenseTypeCode = parseInt(cfg.licenseTypeCode); // 3 = 普通重型機車
     const dmvNo = parseInt(cfg.dmvNo); // 監理站代碼
-    const expectExamDateStr = UTC_to_ROC(cfg.examDate); // 2026-07-15 -> 1150715
     const birthdayStr = UTC_to_ROC(cfg.applicant.birthday);
     const preferGroups = cfg.preferGroups || [];
+    const targetDates = build_target_dates(cfg);
 
-    const pollIntervalMs = cfg.pollIntervalMs || 3000; // 預設 3 秒，保留禮貌性間隔
-    const jitterMs = cfg.jitterMs ?? 700; // 每次間隔隨機加 0~jitter，避免過於規律
+    const pollIntervalMs = cfg.pollIntervalMs || 5000; // 每輪掃描之間的間隔
+    const scanDelayMs = cfg.scanDelayMs || 600; // 掃描模式下，每查一天之間的禮貌性間隔
+    const jitterMs = cfg.jitterMs ?? 700; // 間隔隨機加 0~jitter，避免過於規律
     const maxDurationMs = cfg.maxDurationMs || 30 * 60 * 1000; // 預設最多搶 30 分鐘
 
     log("===== grab_exam 啟動 =====");
+    log(`目標：licenseTypeCode=${licenseTypeCode} dmvNo=${dmvNo}`);
     log(
-        `目標：licenseTypeCode=${licenseTypeCode} dmvNo=${dmvNo} ` +
-            `examDate=${cfg.examDate}(ROC ${expectExamDateStr})`
+        cfg.examDate
+            ? `日期：只搶 ${cfg.examDate}`
+            : `日期：掃描 ${targetDates[0]} 起未來 ${targetDates.length} 天，搶最早有名額的場次`
     );
     log(
         `策略：${
@@ -175,50 +204,65 @@ async function main() {
         }
     }
 
-    // 2) 輪詢搶位
+    // 2) 輪詢搶位：每一輪由近到遠掃過 targetDates，掃到第一個有名額就立刻報名
     const deadline = Date.now() + maxDurationMs;
-    let attempt = 0;
+    let cycle = 0;
     while (Date.now() < deadline) {
-        attempt += 1;
-        try {
-            const results = await mvdis.locations_query(
-                licenseTypeCode,
-                expectExamDateStr,
-                dmvNo
-            );
-            const slot = pick_slot(results, preferGroups);
+        cycle += 1;
+        let foundAny = false;
 
-            if (slot) {
-                log(
-                    `第 ${attempt} 次查詢命中：${slot.date} ${slot.description} ` +
-                        `剩餘 ${slot.number}（secId=${slot.secId} divId=${slot.divId}）→ 立刻報名`
-                );
-                const ok = await mvdis.sign_up(
+        for (const dateStr of targetDates) {
+            if (Date.now() >= deadline) break;
+            const expectExamDateStr = UTC_to_ROC(dateStr);
+            try {
+                const results = await mvdis.locations_query(
                     licenseTypeCode,
-                    slot.expectExamDateStr, // 直接用該場次回傳的日期字串，避免格式不符
-                    dmvNo,
-                    slot.secId,
-                    slot.divId,
-                    cfg.applicant.idNo,
-                    birthdayStr,
-                    cfg.applicant.name,
-                    cfg.applicant.contactTel,
-                    cfg.applicant.email
+                    expectExamDateStr,
+                    dmvNo
                 );
-                if (ok) {
-                    log("🎉 報名成功！收工。");
-                    process.exit(0);
+                const slot = pick_slot(results, preferGroups);
+                if (slot) {
+                    foundAny = true;
+                    log(
+                        `命中 ${dateStr}：${slot.description} 剩餘 ${slot.number}` +
+                            `（secId=${slot.secId} divId=${slot.divId}）→ 立刻報名`
+                    );
+                    const ok = await mvdis.sign_up(
+                        licenseTypeCode,
+                        slot.expectExamDateStr, // 直接用該場次回傳的日期字串，避免格式不符
+                        dmvNo,
+                        slot.secId,
+                        slot.divId,
+                        cfg.applicant.idNo,
+                        birthdayStr,
+                        cfg.applicant.name,
+                        cfg.applicant.contactTel,
+                        cfg.applicant.email
+                    );
+                    if (ok) {
+                        log(`🎉 報名成功！搶到 ${dateStr}，收工。`);
+                        process.exit(0);
+                    }
+                    log("該場次報名失敗（可能剛被搶走），繼續找下一個…");
                 }
-                log("這個場次報名失敗（可能剛好被搶走），繼續嘗試…");
-            } else {
-                log(`第 ${attempt} 次查詢：尚無可報名名額`);
+            } catch (err) {
+                log(`查詢 ${dateStr} 發生例外，略過：`, err.message || err);
             }
-        } catch (err) {
-            log("查詢／報名發生例外，稍後重試：", err.message || err);
+            // 掃描模式下每查一天之間留間隔；單日模式只有一天，影響不大
+            if (targetDates.length > 1) {
+                await sleep(
+                    scanDelayMs + Math.floor(Math.random() * (jitterMs + 1))
+                );
+            }
         }
 
-        const wait = pollIntervalMs + Math.floor(Math.random() * (jitterMs + 1));
-        await sleep(wait);
+        if (!foundAny) {
+            log(
+                `第 ${cycle} 輪掃描完畢：${targetDates[0]} ~ ` +
+                    `${targetDates[targetDates.length - 1]} 暫無可報名名額，稍候再掃`
+            );
+        }
+        await sleep(pollIntervalMs + Math.floor(Math.random() * (jitterMs + 1)));
     }
 
     log("⏰ 已達最長搶位時間仍未成功，結束。");
